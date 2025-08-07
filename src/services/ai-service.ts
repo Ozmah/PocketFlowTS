@@ -2,7 +2,7 @@
 // Replaces YAML-based approach with structured AI SDK responses
 
 import { google } from "@ai-sdk/google";
-import { generateObject } from "ai";
+import { generateObject, generateText } from "ai";
 import { z } from "zod";
 import type {
 	AnalyzeRelationshipsOutput,
@@ -11,6 +11,7 @@ import type {
 	OrderChaptersOutput,
 	WriteChapterOutput,
 } from "../types/tutorial";
+import { CacheService, type CacheOptions } from "./cache-service";
 
 // Zod schemas for structured outputs
 const abstractionSchema = z.object({
@@ -92,17 +93,89 @@ const writeChapterSchema = z.object({
 
 export class AIService {
 	private model;
+	private cacheService: CacheService;
 
 	constructor() {
 		// Might add apiKey?: string as a parameter
 		this.model = google("gemini-2.5-pro");
+		this.cacheService = CacheService.getInstance();
+	}
+
+	async generateTextWithCache(
+		prompt: string,
+		options: CacheOptions & { provider?: string; temperature?: number; maxTokens?: number }
+	): Promise<{ text: string; usage?: any; cached: boolean }> {
+		const provider = options.provider || "gemini";
+		const cachedResponse = await this.cacheService.get(prompt, provider, options);
+
+		if (cachedResponse) {
+			return {
+				text: cachedResponse,
+				cached: true,
+			};
+		}
+
+		const result = await generateText({
+			model: this.model,
+			prompt,
+			temperature: options.temperature,
+			maxTokens: options.maxTokens,
+		});
+
+		await this.cacheService.set(prompt, result.text, provider, options);
+
+		return {
+			text: result.text,
+			usage: result.usage,
+			cached: false,
+		};
+	}
+
+	async generateObjectWithCache<T>(
+		prompt: string,
+		schema: z.ZodSchema<T>,
+		options: CacheOptions & { provider?: string; temperature?: number; maxTokens?: number }
+	): Promise<{ object: T; usage?: any; cached: boolean }> {
+		const provider = options.provider || "gemini";
+		const cacheOptionsWithSchema = { ...options, schema };
+		const cachedResponse = await this.cacheService.get(prompt, provider, cacheOptionsWithSchema);
+
+		if (cachedResponse) {
+			try {
+				const object = JSON.parse(cachedResponse);
+				// Validate with schema before returning
+				schema.parse(object);
+				return {
+					object,
+					cached: true,
+				};
+			} catch (error) {
+				console.warn("Cache hit, but failed to parse or validate. Refetching.", error);
+			}
+		}
+
+		const result = await generateObject({
+			model: this.model,
+			schema,
+			prompt,
+			temperature: options.temperature,
+		});
+
+		await this.cacheService.set(prompt, JSON.stringify(result.object), provider, cacheOptionsWithSchema);
+
+		return {
+			object: result.object,
+			usage: result.usage,
+			cached: false,
+		};
 	}
 
 	async identifyAbstractions(
 		files: FetchedFile[],
 		projectName: string,
 		maxAbstractions: number = 8,
-	): Promise<IdentifyAbstractionsOutput> {
+		options: CacheOptions = {},
+	) {
 		const filesContext = files
 			.map((f) => `File: ${f.path}\n\`\`\`\n${f.content}\n\`\`\``)
 			.join("\n\n");
@@ -131,20 +204,18 @@ Identify up to ${maxAbstractions} most important abstractions that a developer s
 				.describe("Overall project summary and architectural insights"),
 		});
 
-		const result = await generateObject({
-			model: this.model,
-			schema: dynamicAbstractionsSchema,
+		return this.generateObjectWithCache(
 			prompt,
-			temperature: 0.3,
-		});
-
-		return result.object;
+			dynamicAbstractionsSchema,
+			{ ...options, temperature: 0.3 },
+		);
 	}
 
 	async analyzeRelationships(
 		abstractions: IdentifyAbstractionsOutput["abstractions"],
 		files: FetchedFile[],
-	): Promise<AnalyzeRelationshipsOutput> {
+		options: CacheOptions = {},
+	) {
 		const abstractionsContext = abstractions
 			.map((a) => `- ${a.name}: ${a.description}`)
 			.join("\n");
@@ -173,20 +244,18 @@ Analyze how these abstractions relate to each other:
 
 Provide a comprehensive analysis of the project's architecture and the relationships between its key concepts.`;
 
-		const result = await generateObject({
-			model: this.model,
-			schema: analyzeRelationshipsSchema,
+		return this.generateObjectWithCache(
 			prompt,
-			temperature: 0.2,
-		});
-
-		return result.object;
+			analyzeRelationshipsSchema,
+			{ ...options, temperature: 0.2 },
+		);
 	}
 
 	async orderChapters(
 		abstractions: IdentifyAbstractionsOutput["abstractions"],
 		relationships: AnalyzeRelationshipsOutput["relationships"],
-	): Promise<OrderChaptersOutput> {
+		options: CacheOptions = {},
+	) {
 		const abstractionsContext = abstractions
 			.map((a) => `- ${a.name}: ${a.description} (importance: ${a.importance})`)
 			.join("\n");
@@ -212,14 +281,11 @@ Consider these pedagogical principles:
 
 Order the abstractions from 1 (first to teach) to ${abstractions.length} (last to teach) and explain your pedagogical reasoning.`;
 
-		const result = await generateObject({
-			model: this.model,
-			schema: orderChaptersSchema,
+		return this.generateObjectWithCache(
 			prompt,
-			temperature: 0.2,
-		});
-
-		return result.object;
+			orderChaptersSchema,
+			{ ...options, temperature: 0.2 },
+		);
 	}
 
 	async writeChapter(
@@ -228,7 +294,8 @@ Order the abstractions from 1 (first to teach) to ${abstractions.length} (last t
 		relatedAbstractions: string[],
 		chapterNumber: number,
 		language: string = "english",
-	): Promise<WriteChapterOutput> {
+		options: CacheOptions = {},
+	) {
 		const relevantFiles = files.filter((f) =>
 			abstraction.files.includes(f.path),
 		);
@@ -278,14 +345,11 @@ IMPORTANT: For the title field, provide ONLY the descriptive title without any "
 
 Write in a clear, educational tone suitable for developers learning this codebase.`;
 
-		const result = await generateObject({
-			model: this.model,
-			schema: writeChapterSchema,
+		return this.generateObjectWithCache(
 			prompt,
-			temperature: 0.4,
-		});
-
-		return result.object;
+			writeChapterSchema,
+			{ ...options, temperature: 0.4 },
+		);
 	}
 
 	async getUsageStats(): Promise<{ totalTokens: number; model: string }> {

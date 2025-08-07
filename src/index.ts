@@ -7,6 +7,7 @@ import { Elysia, t } from "elysia";
 import JSZip from "jszip";
 
 // Service layer imports
+import { CacheService } from "./services/cache-service";
 import { GitHubCrawler } from "./services/github-crawler";
 import { LocalCrawler } from "./services/local-crawler";
 import { TutorialPipeline } from "./services/pipeline";
@@ -115,6 +116,8 @@ const envPlugin = env({
 	}),
 });
 
+const cacheService = CacheService.getInstance();
+
 // Main application instance with middleware chain
 const app = new Elysia()
 	.use(
@@ -135,6 +138,10 @@ const app = new Elysia()
 						name: "Tutorial Generation",
 						description:
 							"Main tutorial generation endpoints with AI-powered analysis",
+					},
+					{
+						name: "Cache Management",
+						description: "Endpoints for managing the cache",
 					},
 					{
 						name: "AI Testing",
@@ -320,6 +327,66 @@ const app = new Elysia()
 			tags: ["Health"],
 		},
 	})
+	.group("/cache", (app) =>
+		app
+			.get("/status", async () => {
+				const metrics = await cacheService.getMetrics();
+				return {
+					success: true,
+					metrics: {
+						...metrics,
+						hitRateFormatted: `${metrics.hitRate.toFixed(2)}%`,
+						lastCleanupFormatted: new Date(metrics.lastCleanup).toISOString(),
+					},
+				};
+			}, {
+				detail: {
+					summary: "Get cache status and metrics",
+					tags: ["Cache Management"],
+				}
+			})
+			.post("/cleanup", async () => {
+				const result = await cacheService.cleanup();
+				return {
+					success: true,
+					message: "Cache cleanup completed",
+					...result,
+				};
+			}, {
+				detail: {
+					summary: "Run cache cleanup to remove expired entries",
+					tags: ["Cache Management"],
+				}
+			})
+			.delete("/clear", async ({ set }) => {
+				await cacheService.clear();
+				return {
+					success: true,
+					message: "Cache cleared successfully",
+				};
+			}, {
+				detail: {
+					summary: "Clear the entire cache (admin)",
+					tags: ["Cache Management"],
+				}
+			})
+			.get("/config", async () => {
+				return {
+					success: true,
+					config: {
+						cacheDir: ".cache",
+						defaultTTL: "7 days",
+						supportedProviders: ["gemini", "claude", "openai"],
+						hashAlgorithm: "SHA-256",
+					},
+				};
+			}, {
+				detail: {
+					summary: "Get current cache configuration",
+					tags: ["Cache Management"],
+				}
+			})
+	)
 	// Main tutorial generation endpoint
 	// Processes GitHub repositories or local directories to create educational content
 	.post(
@@ -432,9 +499,7 @@ const app = new Elysia()
 
 			// Prepare pipeline configuration object
 			const pipelineConfig = {
-				language: body.language || "english",
-				maxAbstractions: body.maxAbstractions || 8,
-				includeTests: body.includeTests ?? true,
+				...body,
 				files: crawlerResult.files,
 				repository: crawlerResult.repository,
 				statistics: crawlerResult.statistics,
@@ -640,6 +705,20 @@ const app = new Elysia()
 						default: false,
 						description:
 							"Whether to follow symbolic links when crawling local directories",
+					}),
+				),
+				// Cache options
+				useCache: t.Optional(
+					t.Boolean({
+						default: true,
+						description: "Whether to use the cache for this request",
+					}),
+				),
+				cacheTTL: t.Optional(
+					t.Number({
+						minimum: 60000, // 1 minute
+						maximum: 30 * 24 * 60 * 60 * 1000, // 30 days
+						description: "Cache TTL in milliseconds (1 minute to 30 days)",
 					}),
 				),
 			}),

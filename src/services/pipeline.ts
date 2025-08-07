@@ -16,10 +16,11 @@ import type {
 	WriteChapterOutput,
 } from "../types/tutorial";
 import { AIService } from "./ai-service";
+import { CacheService, type CacheOptions, type CacheMetrics } from "./cache-service";
 import { frontMatterService } from "./frontmatter-service";
 import { jekyllService } from "./jekyll-service";
 
-export interface PipelineOptions {
+export interface PipelineOptions extends CacheOptions {
 	language?: string;
 	maxAbstractions?: number;
 	includeTests?: boolean;
@@ -30,10 +31,12 @@ export interface PipelineOptions {
 
 export class TutorialPipeline {
 	private aiService: AIService;
+	private cacheService: CacheService;
 	private steps: PipelineStep[] = [];
 
 	constructor() {
 		this.aiService = new AIService();
+		this.cacheService = CacheService.getInstance();
 		this.initializePipelineSteps();
 	}
 
@@ -98,7 +101,11 @@ export class TutorialPipeline {
 			language = "english",
 			maxAbstractions = 8,
 			includeTests = true,
+			useCache = true,
+			ttl,
 		} = options;
+
+		const cacheOptions: CacheOptions = { useCache, ttl };
 
 		try {
 			// Step 1: Repository Analysis
@@ -152,21 +159,23 @@ export class TutorialPipeline {
 				files,
 				projectName,
 				maxAbstractions,
+				cacheOptions,
 			);
 
 			this.updateStep(
 				1,
 				"completed",
-				`Identified ${abstractionsResult.abstractions.length} key abstractions`,
-				1500,
+				`Identified ${abstractionsResult.object.abstractions.length} key abstractions`,
+				abstractionsResult.usage?.totalTokens || 0,
 			);
 			yield this.createStreamResponse("step_complete", this.steps[1], {
-				abstractions: abstractionsResult.abstractions.map((a) => ({
+				abstractions: abstractionsResult.object.abstractions.map((a) => ({
 					name: a.name,
 					importance: a.importance,
 					files: a.files.length,
 				})),
-				summary: abstractionsResult.summary,
+				summary: abstractionsResult.object.summary,
+				cached: abstractionsResult.cached,
 			});
 
 			// Step 3: Relationship Analysis
@@ -181,25 +190,27 @@ export class TutorialPipeline {
 			);
 
 			const relationshipsResult = await this.aiService.analyzeRelationships(
-				abstractionsResult.abstractions,
+				abstractionsResult.object.abstractions,
 				files,
+				cacheOptions,
 			);
 
 			this.updateStep(
 				2,
 				"completed",
-				`Mapped ${relationshipsResult.relationships.length} relationships`,
-				1200,
+				`Mapped ${relationshipsResult.object.relationships.length} relationships`,
+				relationshipsResult.usage?.totalTokens || 0,
 			);
 			yield this.createStreamResponse("step_complete", this.steps[2], {
-				relationships: relationshipsResult.relationships.map((r) => ({
+				relationships: relationshipsResult.object.relationships.map((r) => ({
 					from: r.from,
 					to: r.to,
 					type: r.type,
 					strength: r.strength,
 				})),
-				insights: relationshipsResult.keyInsights,
-				projectSummary: relationshipsResult.projectSummary,
+				insights: relationshipsResult.object.keyInsights,
+				projectSummary: relationshipsResult.object.projectSummary,
+				cached: relationshipsResult.cached,
 			});
 
 			// Step 4: Chapter Ordering
@@ -214,19 +225,21 @@ export class TutorialPipeline {
 			);
 
 			const orderingResult = await this.aiService.orderChapters(
-				abstractionsResult.abstractions,
-				relationshipsResult.relationships,
+				abstractionsResult.object.abstractions,
+				relationshipsResult.object.relationships,
+				cacheOptions,
 			);
 
 			this.updateStep(
 				3,
 				"completed",
-				`Ordered ${orderingResult.orderedChapters.length} chapters`,
-				800,
+				`Ordered ${orderingResult.object.orderedChapters.length} chapters`,
+				orderingResult.usage?.totalTokens || 0,
 			);
 			yield this.createStreamResponse("step_complete", this.steps[3], {
-				chapterOrder: orderingResult.orderedChapters,
-				pedagogicalFlow: orderingResult.pedagogicalFlow,
+				chapterOrder: orderingResult.object.orderedChapters,
+				pedagogicalFlow: orderingResult.object.pedagogicalFlow,
+				cached: orderingResult.cached,
 			});
 
 			// Step 5: Content Generation
@@ -244,9 +257,9 @@ export class TutorialPipeline {
 			let totalContentTokens = 0;
 
 			// Generate chapters in the determined order
-			for (let i = 0; i < orderingResult.orderedChapters.length; i++) {
-				const chapterOrder = orderingResult.orderedChapters[i];
-				const abstraction = abstractionsResult.abstractions.find(
+			for (let i = 0; i < orderingResult.object.orderedChapters.length; i++) {
+				const chapterOrder = orderingResult.object.orderedChapters[i];
+				const abstraction = abstractionsResult.object.abstractions.find(
 					(a) => a.name === chapterOrder.abstraction,
 				);
 
@@ -254,28 +267,29 @@ export class TutorialPipeline {
 
 				yield this.createStreamResponse("step_progress", this.steps[4], {
 					currentChapter: i + 1,
-					totalChapters: orderingResult.orderedChapters.length,
+					totalChapters: orderingResult.object.orderedChapters.length,
 					chapterName: abstraction.name,
 				});
 
 				// Get related abstractions for context
-				const relatedAbstractions = relationshipsResult.relationships
+				const relatedAbstractions = relationshipsResult.object.relationships
 					.filter(
 						(r) => r.from === abstraction.name || r.to === abstraction.name,
 					)
 					.map((r) => (r.from === abstraction.name ? r.to : r.from))
 					.slice(0, 3);
 
-				const chapterContent = await this.aiService.writeChapter(
+				const chapterResult = await this.aiService.writeChapter(
 					abstraction,
 					files,
 					relatedAbstractions,
 					chapterOrder.order,
 					language,
+					cacheOptions,
 				);
 
-				chapters.push(chapterContent);
-				totalContentTokens += 2000; // Estimated tokens per chapter
+				chapters.push(chapterResult.object);
+				totalContentTokens += chapterResult.usage?.totalTokens || 2000; // Estimate if no usage data
 
 				await this.delay(500); // Brief pause between chapters
 			}
@@ -304,8 +318,8 @@ export class TutorialPipeline {
 
 			const tutorialFiles = await this.assembleTutorial(
 				chapters,
-				orderingResult,
-				relationshipsResult,
+				orderingResult.object,
+				relationshipsResult.object,
 				projectName,
 			);
 
@@ -320,6 +334,7 @@ export class TutorialPipeline {
 			});
 
 			// Final result
+			const cacheMetrics = await this.cacheService.getMetrics();
 			yield this.createStreamResponse("final_result", undefined, {
 				success: true,
 				tutorialFiles,
@@ -330,9 +345,13 @@ export class TutorialPipeline {
 						0,
 					),
 					processingTime: this.calculateTotalDuration(),
-					abstractionsIdentified: abstractionsResult.abstractions.length,
-					relationshipsMapped: relationshipsResult.relationships.length,
+					abstractionsIdentified: abstractionsResult.object.abstractions.length,
+					relationshipsMapped: relationshipsResult.object.relationships.length,
 					chaptersGenerated: chapters.length,
+				},
+				cacheMetrics: {
+					...cacheMetrics,
+					hitRateFormatted: `${cacheMetrics.hitRate.toFixed(2)}%`,
 				},
 			});
 		} catch (error) {

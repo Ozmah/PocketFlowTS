@@ -43,12 +43,16 @@ export interface TutorialFile {
 
 export interface PipelineStep {
 	step: number;
-	name: string;
+	name:string;
 	status: "pending" | "running" | "completed" | "error";
 	message: string;
 	timestamp: string;
 	duration?: number;
 	tokens?: number;
+	metadata?: {
+		cached?: boolean;
+		tokensSaved?: number;
+	};
 }
 
 export type StreamingData =
@@ -68,6 +72,11 @@ export interface StreamingResponse {
 	step?: PipelineStep;
 	data?: StreamingData;
 	error?: string;
+	metadata?: {
+        cached: boolean;
+        cacheProvider: string;
+        tokensSaved: number;
+    };
 }
 
 // Structured output schemas for AI SDK
