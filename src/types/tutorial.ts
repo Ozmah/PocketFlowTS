@@ -202,3 +202,14 @@ export function isLocalRepository(
 ): repo is LocalRepository {
 	return repo.isGitRepository === false;
 }
+
+// Diagram-related types for Mermaid generation
+export interface DiagramConfig {
+	type: DiagramType;
+	title?: string;
+	description?: string;
+	theme?: "default" | "dark" | "forest" | "neutral";
+	direction?: "TD" | "TB" | "BT" | "RL" | "LR";
+}
+
+export type DiagramType = "flowchart" | "sequence" | "class" | "state";

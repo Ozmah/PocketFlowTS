@@ -17,6 +17,7 @@ import type {
 } from "../types/tutorial";
 import { AIService } from "./ai-service";
 import { CacheService, type CacheOptions, type CacheMetrics } from "./cache-service";
+import { DiagramService } from "./diagram-service";
 import { frontMatterService } from "./frontmatter-service";
 import { jekyllService } from "./jekyll-service";
 
@@ -32,11 +33,13 @@ export interface PipelineOptions extends CacheOptions {
 export class TutorialPipeline {
 	private aiService: AIService;
 	private cacheService: CacheService;
+	private diagramService: DiagramService;
 	private steps: PipelineStep[] = [];
 
 	constructor() {
 		this.aiService = new AIService();
 		this.cacheService = CacheService.getInstance();
+		this.diagramService = new DiagramService();
 		this.initializePipelineSteps();
 	}
 
@@ -46,6 +49,7 @@ export class TutorialPipeline {
 			"Abstraction Identification",
 			"Relationship Analysis",
 			"Chapter Ordering",
+			"Architecture Diagram Generation",
 			"Content Generation",
 			"Tutorial Assembly",
 		];
@@ -242,13 +246,45 @@ export class TutorialPipeline {
 				cached: orderingResult.cached,
 			});
 
-			// Step 5: Content Generation
+			// Step 5: Architecture Diagram Generation
 			yield this.createStreamResponse("step_start", {
 				...this.steps[4],
 				status: "running",
 			});
 			this.updateStep(
 				4,
+				"running",
+				"Generating project architecture diagram...",
+			);
+
+			const projectDiagram = this.diagramService.generateProjectArchitectureDiagram(
+				abstractionsResult.object.abstractions,
+				relationshipsResult.object.relationships,
+				{
+					type: 'flowchart',
+					direction: 'TD',
+					title: `${projectName} Architecture Overview`
+				}
+			);
+
+			this.updateStep(
+				4,
+				"completed",
+				"Architecture diagram generated successfully",
+				0, // No token usage for this step
+			);
+			yield this.createStreamResponse("step_complete", this.steps[4], {
+				diagramGenerated: true,
+				diagramLength: projectDiagram.length,
+			});
+
+			// Step 6: Content Generation
+			yield this.createStreamResponse("step_start", {
+				...this.steps[5],
+				status: "running",
+			});
+			this.updateStep(
+				5,
 				"running",
 				"Generating chapter content and extracting technologies...",
 			);
@@ -295,23 +331,23 @@ export class TutorialPipeline {
 			}
 
 			this.updateStep(
-				4,
+				5,
 				"completed",
 				`Generated ${chapters.length} tutorial chapters`,
 				totalContentTokens,
 			);
-			yield this.createStreamResponse("step_complete", this.steps[4], {
+			yield this.createStreamResponse("step_complete", this.steps[5], {
 				chaptersGenerated: chapters.length,
 				totalTokens: totalContentTokens,
 			});
 
-			// Step 6: Tutorial Assembly
+			// Step 7: Tutorial Assembly
 			yield this.createStreamResponse("step_start", {
-				...this.steps[5],
+				...this.steps[6],
 				status: "running",
 			});
 			this.updateStep(
-				5,
+				6,
 				"running",
 				"Assembling tutorial structure and Jekyll configuration...",
 			);
@@ -321,14 +357,15 @@ export class TutorialPipeline {
 				orderingResult.object,
 				relationshipsResult.object,
 				projectName,
+				projectDiagram,
 			);
 
 			this.updateStep(
-				5,
+				6,
 				"completed",
 				`Created ${tutorialFiles.length} tutorial files`,
 			);
-			yield this.createStreamResponse("step_complete", this.steps[5], {
+			yield this.createStreamResponse("step_complete", this.steps[6], {
 				filesCreated: tutorialFiles.length,
 				tutorialSize: this.calculateTutorialSize(tutorialFiles),
 			});
@@ -380,7 +417,8 @@ export class TutorialPipeline {
 		chapters: WriteChapterOutput[],
 		ordering: OrderChaptersOutput,
 		relationships: AnalyzeRelationshipsOutput,
-		projectName: string,
+		projectName:string,
+		projectDiagram: string,
 	): Promise<TutorialFile[]> {
 		const files: TutorialFile[] = [];
 
@@ -411,6 +449,7 @@ export class TutorialPipeline {
 			ordering,
 			relationships,
 			projectName,
+			projectDiagram,
 		);
 		const indexFrontMatter =
 			frontMatterService.generateIndexFrontMatter(tutorialMetadata);
@@ -494,6 +533,7 @@ export class TutorialPipeline {
 		ordering: OrderChaptersOutput,
 		relationships: AnalyzeRelationshipsOutput,
 		projectName: string,
+		projectDiagram: string,
 	): string {
 		const toc = chapters
 			.map((chapter, index) => {
@@ -506,6 +546,12 @@ export class TutorialPipeline {
 		return `# ${projectName} - Tutorial Guide
 
 ${relationships.projectSummary}
+
+## Project Architecture Overview
+
+\`\`\`mermaid
+${projectDiagram}
+\`\`\`
 
 ## Learning Path
 

@@ -263,34 +263,13 @@ export class CacheService {
 		await this.saveCache(cache);
 	}
 
-	private _serializeSchema(schema: any): string {
-		if (!schema || !schema._def) return "unknown";
-
-		const def = schema._def;
-		const typeName = def.typeName;
-
-		switch (typeName) {
-			case "ZodObject": {
-				const shape = def.shape();
-				const keys = Object.keys(shape).sort();
-				return `object:{${keys
-					.map((k) => `${k}:${this._serializeSchema(shape[k])}`)
-					.join(",")}}`;
-			}
-			case "ZodArray":
-				return `array:[${this._serializeSchema(def.type)}]`;
-			case "ZodString":
-				return "string";
-			case "ZodNumber":
-				return "number";
-			case "ZodBoolean":
-				return "boolean";
-			case "ZodOptional":
-			case "ZodNullable":
-				return `optional:${this._serializeSchema(def.innerType)}`;
-			default:
-				return typeName;
+	private _serializeSchema(schema: z.ZodSchema<any>): string {
+		// Using schema.describe() provides a stable, detailed JSON representation
+		// of the schema, including types, checks, and descriptions.
+		if (typeof schema.describe !== 'function') {
+			return 'unknown_schema';
 		}
+		return JSON.stringify(schema.describe());
 	}
 
 	private getSchemaHash(schema: z.ZodSchema<any>): string {

@@ -73,6 +73,22 @@ const sectionSchema = z.object({
 	heading: z.string().describe("Section heading"),
 	content: z.string().describe("Section content in markdown format"),
 	codeExamples: z.array(z.string()).describe("Code examples for this section"),
+	diagrams: z
+		.array(
+			z.object({
+				type: z
+					.enum(["flowchart", "sequence", "class", "state"])
+					.describe("Type of Mermaid diagram"),
+				title: z.string().describe("Diagram title"),
+				mermaidCode: z.string().describe("Mermaid diagram syntax"),
+				description: z.string().describe("Brief description of the diagram"),
+				educationalPurpose: z
+					.string()
+					.describe("What the diagram helps to teach"),
+			}),
+		)
+		.optional()
+		.describe("Mermaid diagrams to clarify complex concepts"),
 });
 
 const writeChapterSchema = z.object({
@@ -309,6 +325,37 @@ Order the abstractions from 1 (first to teach) to ${abstractions.length} (last t
 				? `\n\nRelated concepts to reference: ${relatedAbstractions.join(", ")}`
 				: "";
 
+		const MERMAID_PROMPT_INSTRUCTIONS = `
+---
+IMPORTANT - MERMAID DIAGRAMS:
+When explaining complex concepts, you MUST include Mermaid diagrams to provide visual aids. This is a critical requirement.
+Generate diagrams that are directly relevant to the content of the section.
+
+Diagram Types:
+- Use 'flowchart' for process flows, algorithms, or decision trees.
+- Use 'sequence' for API interactions, data flow, or request/response cycles.
+- Use 'class' for object-oriented programming structures and relationships.
+- Use 'state' for state machines or component lifecycles.
+
+Diagram Content:
+- The 'mermaidCode' must be valid, complete, and properly formatted Mermaid syntax.
+- The 'title' should be a concise and descriptive title for the diagram.
+- The 'description' should briefly explain what the diagram illustrates.
+- The 'educationalPurpose' must clearly state what concept the diagram helps to teach.
+
+Example of a good diagram object:
+"diagrams": [
+  {
+    "type": "flowchart",
+    "title": "Data Processing Flow",
+    "mermaidCode": "graph TD;\\n    A[Start] --> B{Process Data};\\n    B --> C[End];",
+    "description": "A simple flowchart showing the data processing steps.",
+    "educationalPurpose": "To visualize the main stages of data handling in this module."
+  }
+]
+---
+`;
+
 		const prompt = `You are a technical writing expert. Write a tutorial chapter about "${abstraction.name}" in ${language}. This will be chapter ${chapterNumber} of the tutorial.
 
 Abstraction Details:
@@ -318,6 +365,8 @@ Abstraction Details:
 
 Relevant Code Files:
 ${filesContext}${relatedContext}
+
+${MERMAID_PROMPT_INSTRUCTIONS}
 
 Write a comprehensive tutorial chapter that:
 - Explains the concept clearly with practical examples
@@ -329,7 +378,7 @@ Write a comprehensive tutorial chapter that:
 
 Structure the chapter with:
 - A clear introduction explaining what will be learned
-- Multiple sections with detailed explanations and code examples  
+- Multiple sections with detailed explanations, code examples, and MERMAID DIAGRAMS where appropriate.
 - A conclusion that reinforces key takeaways
 - References to related concepts for further exploration
 
