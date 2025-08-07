@@ -374,6 +374,8 @@ const app = new Elysia()
 					);
 				}
 
+				console.log(`💻 GitHub rate limit: ${rateLimit.remaining} requests remaining`);
+
 				// Execute crawl operation with specified options
 				crawlerResult = await githubCrawler.crawlRepository(body.source, {
 					includePatterns: body.includePatterns,

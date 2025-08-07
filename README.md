@@ -31,7 +31,7 @@ This project is a TypeScript/Elysia port of the original Python-based "AI Codeba
 
 1. **Clone the repository**:
    ```bash
-   git clone <repository-url>
+   git clone https://github.com/Ozmah/PocketFlowTS
    cd pocketflowts
    ```
 
@@ -178,8 +178,9 @@ Basic health check endpoint.
 ├── bun.lockb             # Bun dependency lockfile
 ├── package.json          # Project metadata and dependencies
 ├── tsconfig.json         # TypeScript configuration
-├── README.md             # This file
-└── CLAUDE.md             # Development guidance
+├── AGENTS.md             # Agent guidelines
+├── CLAUDE.md             # Development guidance
+└── README.md             # This file
 ```
 
 ## Development

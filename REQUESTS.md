@@ -125,6 +125,53 @@ For different TypeScript frameworks, you may want to adjust the `includePatterns
 ]
 ```
 
+### PHP Laravel Projects
+
+```bash
+curl -X POST http://localhost:3000/generate-tutorial \
+  -H "Content-Type: application/json" \
+  -d '{
+    "source": "/path/to/your/laravel-project",
+    "language": "english",
+    "maxAbstractions": 8,
+    "includeTests": true,
+    "includePatterns": [
+      "app/**/*.php",
+      "routes/**/*.php",
+      "config/**/*.php",
+      "database/**/*.php",
+      "database/migrations/*.php",
+      "database/seeders/*.php",
+      "database/factories/*.php",
+      "resources/views/**/*.blade.php",
+      "resources/lang/**/*.php",
+      "bootstrap/**/*.php",
+      "artisan",
+      "composer.json",
+      "composer.lock",
+      ".env.example"
+    ],
+    "excludePatterns": [
+      "**/vendor/**",
+      "**/storage/**",
+      "**/public/build/**",
+      "**/public/hot",
+      "**/node_modules/**",
+      "**/*.log",
+      "**/cache/**",
+      "**/.phpunit.cache/**",
+      "**/coverage/**",
+      "**/*.env",
+      "**/.env.local",
+      "**/.env.production"
+    ],
+    "maxFileSize": 1048576,
+    "maxFiles": 100,
+    "respectGitignore": true,
+    "followSymlinks": false
+  }'
+```
+
 ## Adapting for Other Programming Languages
 
 To analyze projects in other languages, modify the `includePatterns` and `excludePatterns` accordingly:
